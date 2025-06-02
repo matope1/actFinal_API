@@ -11,6 +11,10 @@ from sqlalchemy.orm import sessionmaker,  Session
 
 from API_KEY import f_api_key  # Importo variable de archivo API_KEY.py
 
+# Crear una app para administrar empleados de un restaurante
+
+
+
 # Funcion de sesion db
 def get_db():
     db = SessionLocal()
@@ -20,14 +24,15 @@ def get_db():
         db.close()
 
 
-# Crear una app para administrar empleados de un restaurante
-
 # Logger
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    # level=logging.INFO,
+    # format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, 
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
 
 # Base de datos = empleados.db
 DATABASE_URL = "sqlite:///./empleados.db"
@@ -61,12 +66,13 @@ class employees(BaseModel):
     def clase_listada(cls, emple):
         list_func = ["camarero", "cocinero", "pinche", "limpiador"]
         if emple not in list_func:
-            raise ValueError("El empleado debera tener la funcion de: camarero, cocinero, pinche o limpiador")
+            logger.warning(f"El empledo no tiene una funcion valida {VALID_FUNCTIONS}")
+            raise HTTPException(status_code=422, detail=f"ERROR: El empleado debera tener la funcion de, Opciones: {VALID_FUNCTIONS}")
         return emple
 
-# emple_db: List[employees] = []
 
-
+# lista para mostrar las funciones del restaurante mas adelante
+VALID_FUNCTIONS = ["cocinero", "camarero", "pinche", "limpiador"]
 
 
 
@@ -83,7 +89,7 @@ async def value_error_handler(request: Request, exc: ValueError):
         content={"detail": str(exc)}  # Mostramos el mensaje de error
     )
 
-# muestra el estado
+# http logger
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"Request: {request.method} {request.url}")
@@ -109,6 +115,7 @@ def sow_all_emple(db: Session = Depends(get_db), token: str = Depends(f_api_key)
     if not empleados:
 
         raise HTTPException(status_code=404, detail="No hay empleados registrados")
+    logger.info("Se estan mostrando todos los empleados EXITOSAMENTE")
     return empleados
 
 
@@ -122,36 +129,43 @@ def empleados_por_funcion(func_emple: str,
     empleados = db.query(emple).filter(emple.func_emple == func_emple).all()
     logger.info(f"Recibida petición para mostrar empleados que tienen la funcion de {func_emple}")
     # Mensaje al cliente 404, y logg para el servidor si no existe la funcion
+    if func_emple not in VALID_FUNCTIONS:
+        # logger.info(f"No existe la función: {func_emple}")
+        # return {"detail": f"No se encontro la funcion {func_emple}"}
+        logger.warning(f"Función no encontrada: {func_emple}, Opciones: {', '.join(VALID_FUNCTIONS)}")
+        # return JSONResponse(
+        #     status_code=400,content={"detail": f"La función '{func_emple}' no es válida. Opciones: {', '.join(VALID_FUNCTIONS)}"}
+        raise HTTPException(status_code=400, detail= f"La función '{func_emple}' no es válida. Opciones: {', '.join(VALID_FUNCTIONS)}"
+        )
+
     if not empleados:
         logger.warning(f"No se encontraron empleados con función: {func_emple}")
         raise HTTPException(status_code=404, detail="No se encontraron empleados con esa función")
-
+    logger.info("Se han devuelto los empleados EXITOSAMENTE")
     return empleados
 
 
 # Crear empleado
-@app.post("/emple/", response_model=list[employees])
+@app.post("/empleado/nuevo")
 def new_emple(name: employees, 
               db: Session = Depends(get_db), 
               token: str = Depends(f_api_key)
               ):
-    logger.info(f"--El empleado {name} se ha REGISTRADO CORRECTAMENTE--")
-        ## Registrarlo de DDBB....
     
+
+    # Si el empleado ya existe con el mismo nombre, no se podra añadir
+    existe = db.query(emple).filter(emple.name == name.name).first()
+    if existe:
+        logger.warning(f"Intento de registrar empleado duplicado: {name.name}")
+        raise HTTPException(status_code=400, detail="El empleado ya está registrado, prueba con otro")
+
     # si lleva mas de 5 años en "trusted" en cambio sera "not trusted"
     if name.years_work > 5:
         prod_trust = "trusted"
     else:
         prod_trust = "not trusted"
 
-    # Si el empleado ya existe con el mismo nombre, no se podra añadir
-    db = SessionLocal()
-    existe = db.query(emple).filter(emple.name == name.name).first()
-    if existe:
-        db.close()
-        raise HTTPException(status_code=400, detail="El empleado ya está registrado")
-
-
+    # añadir datos a bd
     emple_db = emple(
         name=name.name,
         func_emple=name.func_emple,
@@ -162,22 +176,22 @@ def new_emple(name: employees,
     db.commit()
     db.refresh(emple_db)
     db.close()
-    
-    # Respuesta json
+
+    logger.info(f"--El empleado {name} se ha REGISTRADO CORRECTAMENTE--")    
     return {
         "status":"Success",
         "msg": "Empleado registrado correctamente",
         "Empleado": {
-            "name": name.name,
-            "function": name.func_emple,
-            "years_work": name.years_work,
-            "trust": prod_trust
+            "name": name.name
+            # "function": name.func_emple,
+            # "years_work": name.years_work,
+            # "trust": prod_trust
         }
     }
 
 
 # Eliminar empleado
-@app.delete("/empleados/{name}", response_model=list[employees])
+@app.delete("/empleado/despido/{name}")
 def delete_empleado(name: str,       # Nombre de empleado de la BBDD que queremos eliminar
                     db: Session = Depends(get_db),   # Ejecuta sesion de BBDD mientras dura la funcion
                     token: str = Depends(f_api_key)  # Auth Basica
@@ -192,7 +206,8 @@ def delete_empleado(name: str,       # Nombre de empleado de la BBDD que queremo
     
     db.delete(empleado)
     db.commit()
+    logger.info(f"Eliminado el empleado: {name}")
     return {"status": "Success",
-        "mensaje": f"Empleado {name} eliminado exitosamente"}
+            "mensaje": f"Empleado {name} eliminado exitosamente"}
 
 
