@@ -110,7 +110,7 @@ def añadir_empleado():
     try:
         print(f"Respuesta: {response.json()}")
     except ValueError:
-        print("⚠️ Respuesta no es JSON válido. Texto plano del servidor:")
+        print("Respuesta no es JSON válido:")
         print(response.text)
 
 
